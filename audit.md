@@ -1,6 +1,6 @@
-# Execution Audit Log - Phase 3: Count-Min Sketch (Frequency Engine) Implementation
+# Execution Audit Log - Phase 4: HyperLogLog (Cardinality Engine) Implementation
 
-**Execution Step:** Phase 3 - Count-Min Sketch (Frequency Engine) Implementation  
+**Execution Step:** Phase 4 - HyperLogLog (Cardinality Engine) Implementation  
 **Timestamp:** 2026-10-15  
 **Project:** Osmosis (Distributed Deduplication Engine)  
 
@@ -8,40 +8,37 @@
 
 ## Overview
 
-This audit document details the files created, modified, and verified exclusively during **Phase 3**. In this phase, an elementary and whiteboard-friendly Count-Min Sketch frequency estimation engine was implemented using Redis Hashes and the existing `HashUtil.getHashIndices` hashing logic.
+This audit document details the files created, modified, and verified exclusively during **Phase 4**. In this phase, an elementary and whiteboard-friendly HyperLogLog cardinality estimation engine was implemented using Spring Data Redis native `HyperLogLogOperations` (`opsForHyperLogLog`) for tracking global unique element counts.
 
 ---
 
 ## Manifest of Modified and Created Files
 
 ### 1. Service Layer
-- **`src/main/java/com/osmosis/service/CountMinSketchService.java`** *(Created)*:
+- **`src/main/java/com/osmosis/service/HyperLogLogService.java`** *(Created)*:
   - Package: `com.osmosis.service`
   - Injects `RedisTemplate<String, Object>` via Lombok's `@RequiredArgsConstructor`.
-  - Defines frequency sketch constants:
-    - `CMS_KEY = "osmosis:cms"` (Redis Hash key)
-    - `WIDTH = 100000` (Number of buckets / columns)
-    - `DEPTH = 5` (Number of hash functions / rows)
-  - Implements `public long incrementAndGetFrequency(String payload)`:
-    - Records start time with `System.nanoTime()`.
-    - Generates `DEPTH` indices using `HashUtil.getHashIndices(payload, DEPTH, WIDTH)`.
-    - Iterates over each index where row is loop counter `i` and column is `index`.
-    - Constructs field identifier `String field = i + ":" + index;`.
-    - Atomically increments the field count in Redis via `redisTemplate.opsForHash().increment(CMS_KEY, field, 1)`.
-    - Computes `minFrequency` as the minimum across all row increments using `Math.min()`.
-    - Measures elapsed time via `(System.nanoTime() - startTime) / 1_000_000.0` (in milliseconds) and logs the latency directly to the console for telemetry.
-    - Returns the conservative minimum frequency count.
+  - Defines cardinality key constant:
+    - `HLL_KEY = "osmosis:hll"`
+  - Implements `public long addAndGetUniqueCount(String payload)`:
+    - Performs defensive null validation for payload.
+    - Records operation start time using `System.nanoTime()`.
+    - Adds the payload to the HyperLogLog register via `redisTemplate.opsForHyperLogLog().add(HLL_KEY, payload)`.
+    - Retrieves the estimated unique cardinality via `redisTemplate.opsForHyperLogLog().size(HLL_KEY)`.
+    - Measures execution latency via `(System.nanoTime() - startTime) / 1_000_000.0` (in milliseconds) and logs the output to `System.out` for telemetry tracking.
+    - Returns the estimated unique count (safely falling back to `0L` if Redis returns null).
 
 ### 2. Automated Tests
-- **`src/test/java/com/osmosis/service/CountMinSketchServiceTest.java`** *(Created)*:
-  - Unit tests using Mockito (`@ExtendWith(MockitoExtension.class)`) to mock `RedisTemplate<String, Object>` and `HashOperations<String, Object, Object>`.
+- **`src/test/java/com/osmosis/service/HyperLogLogServiceTest.java`** *(Created)*:
+  - Unit tests using Mockito (`@ExtendWith(MockitoExtension.class)`) to mock `RedisTemplate<String, Object>` and `HyperLogLogOperations<String, Object>`.
   - Verifies:
-    1. `shouldIncrementAndReturnMinimumFrequency`: Simulates varying counter values (`10, 7, 15, 8, 12`) across the 5 hash slots and asserts that the minimum value (`7`) is returned, verifying all 5 field increments.
-    2. `shouldReturnOneOnFirstOccurrence`: Simulates the initial occurrence of a payload where all 5 hash counters return `1`, asserting that the returned frequency is `1`.
+    1. `shouldAddAndReturnEstimatedUniqueCount`: Verifies that `add(HLL_KEY, payload)` and `size(HLL_KEY)` are invoked and the estimated count (`42L`) is correctly returned.
+    2. `shouldHandleNullSizeSafely`: Verifies safe fallback to `0L` when `size()` returns `null`.
+    3. `shouldThrowWhenPayloadIsNull`: Verifies defensive exception handling for null payloads.
 
 ---
 
 ## Verification Results
 - Executed `mvn clean test` in `/Users/mohammedaafaqahmed/Developer/Osmosis`.
-- **Results:** 11 tests run across all test suites, 0 failures, 0 errors, 0 skipped.
+- **Results:** 14 tests run across all test suites, 0 failures, 0 errors, 0 skipped.
 - **Status:** `BUILD SUCCESS`.
