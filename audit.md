@@ -1,6 +1,6 @@
-# Execution Audit Log - Phase 7: Executive Documentation & Architecture Ledger
+# Execution Audit Log - Phase 8: Cloud Deployment Preparation (Vercel & Upstash)
 
-**Execution Step:** Phase 7 - Executive Documentation & Architecture Ledger  
+**Execution Step:** Phase 8 - Cloud Deployment Preparation (Vercel & Upstash)  
 **Timestamp:** 2026-10-15  
 **Project:** Osmosis (Distributed Deduplication Engine)  
 
@@ -8,38 +8,47 @@
 
 ## Overview
 
-This audit document details the files created, modified, or removed exclusively during **Phase 7**. In this phase, comprehensive executive documentation and system architectural records were established, outlining the problem statement, probabilistic data structure algorithms, resume highlights, and reproducible setup guides.
+This audit document details the files created, modified, and verified exclusively during **Phase 8**. In this phase, the system was prepared for production cloud deployment by enabling authenticated Redis connectivity (tailored for managed services such as Upstash) and creating a lean, multi-stage Docker containerization pipeline compatible with container runtimes (such as Vercel Container Engine).
 
 ---
 
-## Manifest of Modified, Created, and Removed Files
+## Manifest of Modified and Created Files
 
-### 1. Documentation & Cleanup
-- **`HELP.md`** *(Removed)*:
-  - Removed default placeholder Spring Initializr documentation from the project root.
+### 1. Configuration & Cloud Security
+- **`src/main/resources/application.yml`** *(Modified)*:
+  - Added `password: ${REDIS_PASSWORD:}` under `spring.data.redis`.
+  - Supports authenticated cloud Redis providers (e.g., Upstash Redis) while preserving default unauthenticated local fallback.
 
-- **`README.md`** *(Created)*:
-  - Location: `README.md` (project root).
-  - Authored comprehensive architectural and executive ledger adhering to required sections:
-    - **Hero Section:** Features project title (`# Osmosis`) and mission subtitle.
-    - **The Problem vs. The Solution:** Outlines memory exhaustion ($O(N)$ space bloat and `OutOfMemoryError`s) of traditional `HashSet` / raw-string persistence versus constant-memory ($O(1)$) probabilistic bit arrays.
-    - **The Engines:** Structured comparative Markdown table detailing the 3 probabilistic algorithms:
-      1. *Bloom Filter* (Deduplication via Redis Bitmaps, $O(k)$ time, zero false negatives).
-      2. *Count-Min Sketch* (Rate limiting / frequency tracking via Redis Hashes, $O(d)$ time, conservative over-estimation bound).
-      3. *HyperLogLog* (Global unique cardinality via Redis native HyperLogLog, fixed 12 KB space, $\approx 0.81\%$ standard error).
-    - **System Architecture:** Details tech stack (Java 17/21, Spring Boot 3, Redis Lettuce driver, Google Guava MurmurHash3 128-bit, Artillery) and architectural design principles.
-    - **Performance Metrics (Resume Highlights):** Documents key production milestones:
-      - *"Achieved a throughput of 15,000+ ops/sec with < 3ms p99 latency during stream ingestion."*
-      - *"Reduced memory consumption by 98% compared to standard HashSets by implementing Redis-backed bit arrays."*
-      - *"Engineered O(1) space and time complexity tracking for up to 10 million distinct stream elements."*
-    - **Getting Started:** Step-by-step terminal instructions covering infrastructure provisioning (`docker-compose up -d`), application execution (`mvn spring-boot:run`), health inspection (`GET /health`), and stream event ingestion (`POST /api/v1/engine/process`).
-    - **Load Testing:** Instructions for executing the Artillery benchmark suite (`cd load-testing` && `npx artillery run osmosis-benchmark.yml`).
+- **`src/main/java/com/osmosis/config/RedisConfig.java`** *(Modified)*:
+  - Injected `@Value("${spring.data.redis.password:}") private String redisPassword;`.
+  - Updated `redisConnectionFactory()` bean definition to conditionally apply password authentication:
+    ```java
+    if (redisPassword != null && !redisPassword.trim().isEmpty()) {
+        configuration.setPassword(redisPassword);
+    }
+    ```
+
+### 2. Containerization & Deployment Ignore
+- **`.vercelignore`** *(Created)*:
+  - Location: `.vercelignore` (root).
+  - Explicitly excludes build artifacts and testing directories from deployment packages:
+    - `target/`
+    - `.git/`
+    - `.idea/`
+    - `.vscode/`
+    - `load-testing/`
+
+- **`Dockerfile`** *(Created)*:
+  - Location: `Dockerfile` (root).
+  - Configured with a lean, multi-stage build:
+    - **Stage 1 (`build`)**: Uses `maven:3.9-eclipse-temurin-21-alpine`, copies `pom.xml` and `src/`, and runs `mvn clean package -DskipTests`.
+    - **Stage 2 (`runtime`)**: Uses lightweight `eclipse-temurin:21-jre-alpine`, copies the compiled JAR artifact from `/app/target/*.jar` to `/app.jar`.
+    - Exposes application port `8080`.
+    - Configures container entrypoint: `["java", "-jar", "/app.jar"]`.
 
 ---
 
 ## Verification Results
-- Validated presence and Markdown formatting of `README.md`.
-- Verified non-existence of `HELP.md`.
-- Executed `mvn test` in `/Users/mohammedaafaqahmed/Developer/Osmosis` to verify codebase integrity.
+- Executed `mvn clean test` in `/Users/mohammedaafaqahmed/Developer/Osmosis`.
 - **Results:** 16 tests run across all test suites, 0 failures, 0 errors, 0 skipped.
 - **Status:** `BUILD SUCCESS`.
