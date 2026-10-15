@@ -1,6 +1,6 @@
-# Execution Audit Log
+# Execution Audit Log - Phase 2: Bloom Filter Engine Implementation
 
-**Execution Step:** Osmosis Spring Boot Project Initialization  
+**Execution Step:** Phase 2 - Bloom Filter Engine Implementation  
 **Timestamp:** 2026-10-15  
 **Project:** Osmosis (Distributed Deduplication Engine)  
 
@@ -8,85 +8,57 @@
 
 ## Overview
 
-This audit document details every file created, modified, or configured during this execution step to scaffold the core foundation of the **Osmosis** distributed deduplication engine.
+This audit document details the files created, modified, and verified exclusively during **Phase 2**. In this phase, an elementary, whiteboard-friendly distributed Bloom filter engine was implemented using Google Guava's 128-bit MurmurHash3 and Redis bitmap operations via `RedisTemplate`.
 
 ---
 
-## Detailed Manifest of Created / Configured Files
+## Manifest of Modified and Created Files
 
-### 1. Build and Project Configuration
-- **`pom.xml`**:
-  - Configures the Maven project for Spring Boot `3.3.5` using Java 21.
-  - Declares core dependencies:
-    - `spring-boot-starter-web`: Exposes REST endpoints for deduplication ingestion and query APIs.
-    - `spring-boot-starter-data-redis`: Integrates Spring Data Redis with Lettuce as the underlying driver.
-    - `lombok`: Provides boilerplate reduction (`@Getter`, `@Setter`, `@Builder`, etc.).
-    - `spring-boot-starter-test`: Standard testing library (JUnit Jupiter, AssertJ, Mockito, Spring Test).
-  - Configures `spring-boot-maven-plugin` with Lombok exclusion from repackaged JAR.
+### 1. Build Configuration
+- **`pom.xml`** *(Modified)*:
+  - Added Google Guava dependency:
+    - GroupId: `com.google.guava`
+    - ArtifactId: `guava`
+    - Version: `33.0.0-jre`
+  - Enables `Hashing.murmur3_128()` for generating uniform, low-collision hash values for Bloom filter bit positions.
 
-- **`src/main/resources/application.yml`**:
-  - Replaced default properties with structured YAML configuration.
-  - Configures `spring.application.name: osmosis`.
-  - Configures `spring.data.redis`:
-    - `host: ${REDIS_HOST:localhost}`
-    - `port: ${REDIS_PORT:6379}`
-    - `timeout: 2000ms`
-  - Configures HTTP server port `8080`.
+### 2. Utility Layer
+- **`src/main/java/com/osmosis/util/HashUtil.java`** *(Created)*:
+  - Package: `com.osmosis.util`
+  - Implements `public static long[] getHashIndices(String payload, int numHashes, long bitArraySize)`.
+  - Uses Guava's `Hashing.murmur3_128().hashString(payload + i, StandardCharsets.UTF_8).asLong()` to generate independent hash values for each index `i`.
+  - Normalizes raw hash values using `Math.abs()` and modulo `bitArraySize` to guarantee strictly non-negative indices within `[0, bitArraySize)`.
+  - Includes defensive validations for null payloads, non-positive hash counts, and non-positive bit array sizes.
 
-- **`docker-compose.yml`**:
-  - Located at the repository root.
-  - Provisions a lightweight Redis container using `redis:7-alpine`.
-  - Binds host port `6379` to container port `6379`.
-  - Sets restart policy `unless-stopped` and mounts persistent named volume `redis_data`.
+### 3. Service Layer
+- **`src/main/java/com/osmosis/service/BloomFilterService.java`** *(Created)*:
+  - Package: `com.osmosis.service`
+  - Injects `RedisTemplate<String, Object>` via Lombok's `@RequiredArgsConstructor`.
+  - Defines core constants:
+    - `BLOOM_FILTER_KEY = "osmosis:bloom"`
+    - `BIT_ARRAY_SIZE = 10000000L` (10 million bits)
+    - `NUM_HASHES = 5`
+  - Implements `public boolean isDuplicate(String payload)`:
+    - Records start time with `System.nanoTime()`.
+    - Computes hash indices via `HashUtil.getHashIndices(payload, NUM_HASHES, BIT_ARRAY_SIZE)`.
+    - Queries Redis bitmap via `redisTemplate.opsForValue().getBit(BLOOM_FILTER_KEY, index)` for each index.
+    - If any bit is `0` (or `null`/`false`), marks `allBitsSet = false`, sets all calculated bit indices to `1` using `redisTemplate.opsForValue().setBit(...)`, and treats the item as a new unique record.
+    - Measures execution latency using `(System.nanoTime() - startTime) / 1_000_000.0` (in milliseconds) and logs the output directly to `System.out` for telemetry tracking.
+    - Returns `true` if all bits were already present (`1`), or `false` otherwise.
 
-- **`.gitignore` & `.gitattributes`**:
-  - Standard ignores for build directories (`target/`), IDE caches (`.vscode/`, `.idea/`), and wrapper binaries.
-
-- **`mvnw`, `mvnw.cmd`, `.mvn/wrapper/maven-wrapper.properties`**:
-  - Maven wrapper scripts enabling reproducible builds across any environment.
-
----
-
-### 2. Core Application & Scaffolding (`com.osmosis`)
-- **`src/main/java/com/osmosis/OsmosisApplication.java`**:
-  - Entry point class annotated with `@SpringBootApplication` that boots up the Spring context.
-
-- **`src/main/java/com/osmosis/config/RedisConfig.java`**:
-  - Package: `com.osmosis.config`.
-  - Sets up `RedisConnectionFactory` using `LettuceConnectionFactory` and `RedisStandaloneConfiguration`, resolving host and port from `application.yml` (`${spring.data.redis.host:localhost}`, `${spring.data.redis.port:6379}`).
-  - Instantiates and configures a `RedisTemplate<String, Object>` bean:
-    - Key and Hash Key Serializer: `StringRedisSerializer`.
-    - Value and Hash Value Serializer: `GenericJackson2JsonRedisSerializer`.
-
-- **`src/main/java/com/osmosis/controller/HealthController.java`**:
-  - Package: `com.osmosis.controller`.
-  - REST controller annotated with `@RestController`.
-  - Exposes `GET /health` endpoint returning `ResponseEntity<String>` with HTTP 200 OK and payload `"Osmosis Engine Active"`.
-
-- **`src/main/java/com/osmosis/service/package-info.java`**:
-  - Package: `com.osmosis.service`.
-  - Scaffolds the service package for deduplication business logic.
-
-- **`src/main/java/com/osmosis/util/package-info.java`**:
-  - Package: `com.osmosis.util`.
-  - Scaffolds the utility package for hashing and data structures.
-
----
-
-### 3. Automated Tests
-- **`src/test/java/com/osmosis/controller/HealthControllerTest.java`**:
-  - Spring MVC test using `@WebMvcTest(HealthController.class)`.
-  - Verifies that `GET /health` returns status code 200 OK and content `"Osmosis Engine Active"`.
-
-- **`src/test/java/com/osmosis/config/RedisConfigTest.java`**:
-  - Integration test asserting that the `RedisConnectionFactory` and `RedisTemplate<String, Object>` beans are properly wired into the Spring context with their respective serializers.
-
-- **`src/test/java/com/osmosis/OsmosisApplicationTests.java`**:
-  - Spring Boot context load sanity check.
+### 4. Automated Tests
+- **`src/test/java/com/osmosis/service/BloomFilterServiceTest.java`** *(Created)*:
+  - Unit tests utilizing Mockito (`@ExtendWith(MockitoExtension.class)`) to mock `RedisTemplate<String, Object>` and `ValueOperations<String, Object>`.
+  - Verifies:
+    1. Returns `true` and never calls `setBit` when all calculated bit indices return `true`.
+    2. Returns `false` and calls `setBit(BLOOM_FILTER_KEY, index, true)` for all 5 calculated indices when a bit is `false`.
+    3. Returns `false` and calls `setBit` when a bit is `null`.
+- **`src/test/java/com/osmosis/util/HashUtilTest.java`** *(Created)*:
+  - Validates index count, range bounds (`[0, bitArraySize)`), determinism across multiple runs, and argument validation exception handling.
 
 ---
 
 ## Verification Results
-- Ran `mvn test` in `/Users/mohammedaafaqahmed/Developer/Osmosis`.
-- **Results:** 3 tests run, 0 failures, 0 errors, 0 skipped.
+- Executed `mvn clean test` in `/Users/mohammedaafaqahmed/Developer/Osmosis`.
+- **Results:** 9 tests run across all test suites, 0 failures, 0 errors, 0 skipped.
 - **Status:** `BUILD SUCCESS`.
