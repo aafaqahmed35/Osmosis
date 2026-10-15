@@ -1,6 +1,6 @@
-# Execution Audit Log - Phase 4: HyperLogLog (Cardinality Engine) Implementation
+# Execution Audit Log - Phase 5: Ingestion API & REST Layer
 
-**Execution Step:** Phase 4 - HyperLogLog (Cardinality Engine) Implementation  
+**Execution Step:** Phase 5 - Ingestion API & REST Layer  
 **Timestamp:** 2026-10-15  
 **Project:** Osmosis (Distributed Deduplication Engine)  
 
@@ -8,37 +8,52 @@
 
 ## Overview
 
-This audit document details the files created, modified, and verified exclusively during **Phase 4**. In this phase, an elementary and whiteboard-friendly HyperLogLog cardinality estimation engine was implemented using Spring Data Redis native `HyperLogLogOperations` (`opsForHyperLogLog`) for tracking global unique element counts.
+This audit document details the files created, modified, and verified exclusively during **Phase 5**. In this phase, the unified ingestion REST controller and DTO layer were implemented, orchestrating the Bloom filter, Count-Min sketch, and HyperLogLog engines into a single low-latency ingestion endpoint (`POST /api/v1/engine/process`).
 
 ---
 
 ## Manifest of Modified and Created Files
 
-### 1. Service Layer
-- **`src/main/java/com/osmosis/service/HyperLogLogService.java`** *(Created)*:
-  - Package: `com.osmosis.service`
-  - Injects `RedisTemplate<String, Object>` via Lombok's `@RequiredArgsConstructor`.
-  - Defines cardinality key constant:
-    - `HLL_KEY = "osmosis:hll"`
-  - Implements `public long addAndGetUniqueCount(String payload)`:
-    - Performs defensive null validation for payload.
-    - Records operation start time using `System.nanoTime()`.
-    - Adds the payload to the HyperLogLog register via `redisTemplate.opsForHyperLogLog().add(HLL_KEY, payload)`.
-    - Retrieves the estimated unique cardinality via `redisTemplate.opsForHyperLogLog().size(HLL_KEY)`.
-    - Measures execution latency via `(System.nanoTime() - startTime) / 1_000_000.0` (in milliseconds) and logs the output to `System.out` for telemetry tracking.
-    - Returns the estimated unique count (safely falling back to `0L` if Redis returns null).
+### 1. Data Transfer Objects (DTO Layer)
+- **`src/main/java/com/osmosis/controller/dto/EventPayload.java`** *(Created)*:
+  - Package: `com.osmosis.controller.dto`
+  - Annotated with Lombok `@Data`, `@NoArgsConstructor`, and `@AllArgsConstructor`.
+  - Defines single field:
+    - `private String streamKey;` (Represents incoming event token, user ID, or IP address).
 
-### 2. Automated Tests
-- **`src/test/java/com/osmosis/service/HyperLogLogServiceTest.java`** *(Created)*:
-  - Unit tests using Mockito (`@ExtendWith(MockitoExtension.class)`) to mock `RedisTemplate<String, Object>` and `HyperLogLogOperations<String, Object>`.
+- **`src/main/java/com/osmosis/controller/dto/EngineResponse.java`** *(Created)*:
+  - Package: `com.osmosis.controller.dto`
+  - Annotated with Lombok `@Data`, `@NoArgsConstructor`, `@AllArgsConstructor`, and `@Builder`.
+  - Defines unified metrics fields:
+    - `private boolean duplicate;` (Result of Bloom filter check)
+    - `private long frequency;` (Estimated occurrence count via Count-Min sketch)
+    - `private long globalUniqueElements;` (Estimated total unique cardinality via HyperLogLog)
+    - `private double totalProcessingTimeMs;` (Total end-to-end processing latency in milliseconds)
+
+### 2. Controller Layer
+- **`src/main/java/com/osmosis/controller/IngestionController.java`** *(Created)*:
+  - Package: `com.osmosis.controller`
+  - Annotated with `@RestController` and `@RequestMapping("/api/v1/engine")`.
+  - Injects `BloomFilterService`, `CountMinSketchService`, and `HyperLogLogService` via constructor injection (`@RequiredArgsConstructor`).
+  - Implements `POST /process` endpoint accepting `@RequestBody EventPayload payload`:
+    - Captures `long startTime = System.nanoTime();`.
+    - Invokes `bloomFilterService.isDuplicate(key)`.
+    - Invokes `countMinSketchService.incrementAndGetFrequency(key)`.
+    - Invokes `hyperLogLogService.addAndGetUniqueCount(key)`.
+    - Calculates total latency via `(System.nanoTime() - startTime) / 1_000_000.0`.
+    - Returns `ResponseEntity.ok(response)` containing the constructed `EngineResponse`.
+
+### 3. Automated Tests
+- **`src/test/java/com/osmosis/controller/IngestionControllerTest.java`** *(Created)*:
+  - Web layer test using `@WebMvcTest(IngestionController.class)` and `MockMvc`.
+  - Mocks all 3 backend services (`@MockBean BloomFilterService`, `@MockBean CountMinSketchService`, `@MockBean HyperLogLogService`).
   - Verifies:
-    1. `shouldAddAndReturnEstimatedUniqueCount`: Verifies that `add(HLL_KEY, payload)` and `size(HLL_KEY)` are invoked and the estimated count (`42L`) is correctly returned.
-    2. `shouldHandleNullSizeSafely`: Verifies safe fallback to `0L` when `size()` returns `null`.
-    3. `shouldThrowWhenPayloadIsNull`: Verifies defensive exception handling for null payloads.
+    1. `shouldProcessNewEventSuccessfully`: Sends `POST /api/v1/engine/process` for new event, asserts HTTP 200 OK, `duplicate=false`, `frequency=1`, `globalUniqueElements=100`, and numeric `totalProcessingTimeMs`.
+    2. `shouldProcessDuplicateEventSuccessfully`: Sends `POST /api/v1/engine/process` for duplicate event, asserts HTTP 200 OK, `duplicate=true`, `frequency=7`, and `globalUniqueElements=500`.
 
 ---
 
 ## Verification Results
 - Executed `mvn clean test` in `/Users/mohammedaafaqahmed/Developer/Osmosis`.
-- **Results:** 14 tests run across all test suites, 0 failures, 0 errors, 0 skipped.
+- **Results:** 16 tests run across all test suites, 0 failures, 0 errors, 0 skipped.
 - **Status:** `BUILD SUCCESS`.
