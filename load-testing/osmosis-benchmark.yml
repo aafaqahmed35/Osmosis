@@ -1,0 +1,24 @@
+config:
+  target: "http://localhost:8080"
+  phases:
+    - name: "Warm Up"
+      duration: 10
+      arrivalRate: 50
+    - name: "Ramp Up"
+      duration: 20
+      arrivalRate: 50
+      rampTo: 500
+    - name: "Sustained High Load"
+      duration: 30
+      arrivalRate: 1000
+  defaults:
+    headers:
+      Content-Type: "application/json"
+
+scenarios:
+  - name: "Stream Ingestion Engine Benchmark"
+    flow:
+      - post:
+          url: "/api/v1/engine/process"
+          json:
+            streamKey: "token-{{ $randomNumber(1, 10000) }}"
